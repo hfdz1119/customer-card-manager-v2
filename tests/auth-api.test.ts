@@ -61,7 +61,21 @@ describe('客户和购买 API',()=>{
  const read=await worker.fetch(req(`/api/customers/${id}`,'GET',undefined,s.cookie),env);expect(read.status).toBe(200);expect((await read.json() as {customer:{name:string}}).customer.name).toBe('测试客户');
  const edit=await worker.fetch(req(`/api/customers/${id}`,'PATCH',{name:'已编辑',contact:null},s.cookie,s.csrf),env);expect(edit.status).toBe(200);expect(db.customers.get(id)?.name).toBe('已编辑');expect(db.customers.get(id)?.contact).toBeNull();
  const createPurchase=await worker.fetch(req('/api/purchases','POST',{customer_id:id,plan:'monthly',purchased_on:'2026-10-01',expires_on:'2026-11-01',selling_price_cents:2000},s.cookie,s.csrf),env);expect(createPurchase.status).toBe(201);const purchase=await createPurchase.json() as {id:string};expect(db.purchases.get(purchase.id)?.cost_snapshot_cents).toBe(600);
+ const dashboard=await worker.fetch(req('/api/dashboard','GET',undefined,s.cookie),env);expect(await dashboard.json()).toMatchObject({sales_cents:2000,profit_cents:1400,missing_prices:0});
  const remove=await worker.fetch(req(`/api/customers/${id}`,'DELETE',undefined,s.cookie,s.csrf),env);expect(remove.status).toBe(200);expect(db.customers.has(id)).toBe(false);expect(db.purchases.has(purchase.id)).toBe(false);
  });
  it('未知售价显示为待补录且不计入销售额和利润',async()=>{const s=await login();const cr=await worker.fetch(req('/api/customers','POST',{name:'历史客户'},s.cookie,s.csrf),env);const {id}=await cr.json() as {id:string};const r=await worker.fetch(req('/api/purchases','POST',{customer_id:id,plan:'annual',purchased_on:'2026-01-01',selling_price_cents:null},s.cookie,s.csrf),env);expect(r.status).toBe(201);const list=await worker.fetch(req('/api/purchases','GET',undefined,s.cookie),env);const rows=await list.json() as Array<{selling_price_cents:number|null;cost_snapshot_cents:number}>;expect(rows[0].selling_price_cents).toBeNull();expect(rows[0].cost_snapshot_cents).toBe(6000);const dashboard=await worker.fetch(req('/api/dashboard','GET',undefined,s.cookie),env);expect(await dashboard.json()).toMatchObject({sales_cents:0,profit_cents:0,missing_prices:1});});
+ it('仪表盘按自然日统计有效、即将到期、已到期和无到期日期客户',async()=>{
+  const s=await login();
+  const today=new Intl.DateTimeFormat('en-CA',{timeZone:'Asia/Shanghai',year:'numeric',month:'2-digit',day:'2-digit'}).format(new Date());
+  const shift=(days:number)=>{const d=new Date(`${today}T00:00:00Z`);d.setUTCDate(d.getUTCDate()+days);return d.toISOString().slice(0,10);};
+  for(const [name,expires] of [['今天',shift(0)],['七天内',shift(7)],['更远',shift(8)],['已过期',shift(-1)],['无日期',null]] as const){
+    const id=crypto.randomUUID();db.customers.set(id,{id,name,contact:null,notes:null,created_at:today,updated_at:today});
+    if(expires){const purchaseId=crypto.randomUUID();db.purchases.set(purchaseId,{id:purchaseId,customer_id:id,plan:'monthly',purchased_on:today,expires_on:expires,selling_price_cents:null,cost_snapshot_cents:600,created_at:today});}
+  }
+  const response=await worker.fetch(req('/api/dashboard','GET',undefined,s.cookie),env);
+  expect(response.status).toBe(200);
+  expect(await response.json()).toMatchObject({customers:5,statuses:{active:3,upcoming:1,expired:1,no_expiry:1}});
+ });
+
 });

@@ -17,8 +17,13 @@ function statusCounts(rows: CustomerRow[], today: string) {
   const counts = { active: 0, upcoming: 0, expired: 0, no_expiry: 0 };
   for (const row of rows) {
     const status = expiryStatus(row.last_expiry, today);
-    counts[status] += 1;
-    if (row.last_expiry && row.last_expiry >= today) counts.active += 1;
+    if (status === 'no_expiry') counts.no_expiry += 1;
+    else if (status === 'expired') counts.expired += 1;
+    else {
+      // Active means expiration is today or later; due-soon is a separate overlapping count.
+      counts.active += 1;
+      if (status === 'upcoming') counts.upcoming += 1;
+    }
   }
   return counts;
 }
@@ -146,7 +151,7 @@ async function handleApi(request: Request, env: Env): Promise<Response> {
   }
   if (path === '/api/expiry' && request.method === 'GET') {
     const kind = url.searchParams.get('status'); const today = businessDate(new Date(), 'Asia/Shanghai');
-    let where = 'p.expires_on IS NOT NULL'; if (kind === 'upcoming') where += ` AND p.expires_on>=? AND p.expires_on<=?`; else if (kind === 'expired') where += ' AND p.expires_on<?';
+    let where = 'p.expires_on IS NOT NULL'; if (kind === 'upcoming') where += ` AND p.expires_on>? AND p.expires_on<=?`; else if (kind === 'expired') where += ' AND p.expires_on<?';
     let query = `SELECT p.*,c.name customer_name,c.contact FROM purchases p JOIN customers c ON c.id=p.customer_id WHERE ${where} ORDER BY p.expires_on ASC`;
     let result;
     if (kind === 'upcoming') result = await env.DB.prepare(query).bind(today,todayPlus(today,7)).all<PurchaseRow>();

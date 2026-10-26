@@ -11,8 +11,9 @@ describe('日期与到期状态',()=>{
  it('按业务时区生成日期，避免 UTC 日期偏移',()=>{
   expect(businessDate(new Date('2026-01-01T16:30:00Z'),'Asia/Shanghai')).toBe('2026-01-02');
  });
- it('今天和未来七天分类为即将到期，第八天仍有效，过去日期已到期',()=>{
-  expect(expiryStatus('2026-01-10','2026-01-10')).toBe('upcoming');
+ it('今天仍有效，未来 1–7 天即将到期，第八天仍有效，过去日期已到期',()=>{
+  expect(expiryStatus('2026-01-10','2026-01-10')).toBe('active');
+  expect(expiryStatus('2026-01-11','2026-01-10')).toBe('upcoming');
   expect(expiryStatus('2026-01-17','2026-01-10')).toBe('upcoming');
   expect(expiryStatus('2026-01-18','2026-01-10')).toBe('active');
   expect(expiryStatus('2026-01-09','2026-01-10')).toBe('expired');

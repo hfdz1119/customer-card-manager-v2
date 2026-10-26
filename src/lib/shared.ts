@@ -16,6 +16,7 @@ export function expiryStatus(date: string | null, today: string): CustomerStatus
   if (!date) return 'no_expiry';
   const days = daysBetween(date, today);
   if (days < 0) return 'expired';
+  if (days === 0) return 'active';
   if (days <= 7) return 'upcoming';
   return 'active';
 }

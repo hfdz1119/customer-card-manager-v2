@@ -1,9 +1,34 @@
 import { pbkdf2Sync, randomBytes } from 'node:crypto';
-import { spawn } from 'node:child_process';
-import { readFile, writeFile } from 'node:fs/promises';
+import { spawn, spawnSync } from 'node:child_process';
+import { access, readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
+import { createInterface } from 'node:readline/promises';
 const mode = process.argv.includes('--remote') ? 'remote' : process.argv.includes('--local') ? 'local' : '';
 if (!mode) { console.error('请选择 --local 或 --remote。'); process.exit(2); }
+const configIndex = process.argv.indexOf('--config');
+const config = configIndex >= 0 ? process.argv[configIndex + 1] : '';
+const outputIndex = process.argv.indexOf('--output-file');
+const outputFile = outputIndex >= 0 ? process.argv[outputIndex + 1] : '';
+if (outputIndex >= 0 && (!outputFile || mode !== 'remote')) { console.error('--output-file 仅供远程首次部署使用。'); process.exit(2); }
+const wrangler = path.resolve('node_modules/wrangler/bin/wrangler.js');
+if (mode === 'remote') {
+  if (!config) { console.error('远程设置需要明确的部署配置；先运行 npm run deploy。'); process.exit(2); }
+  try {
+    await access(config);
+    const parsed = JSON.parse(await readFile(config, 'utf8'));
+    const db = parsed.d1_databases?.find((binding) => binding.binding === 'DB');
+    if (!db?.database_id || db.database_id === '00000000-0000-0000-0000-000000000000') throw new Error();
+  } catch { console.error('找不到有效的本机部署配置；先运行 npm run deploy。'); process.exit(2); }
+  if (!process.argv.includes('--account-confirmed')) {
+    const who = spawnSync(process.execPath, [wrangler, 'whoami'], { stdio: 'inherit' });
+    if (who.status !== 0) { console.error('Wrangler 尚未登录；没有修改 Secret。'); process.exit(2); }
+    if (!process.stdin.isTTY || !process.stdout.isTTY) { console.error('请在交互式终端确认 Cloudflare 账户；没有修改 Secret。'); process.exit(2); }
+    const rl = createInterface({ input: process.stdin, output: process.stdout });
+    const answer = await rl.question('以上 Wrangler 账户是要修改管理员密码的账户吗？输入 y 确认：');
+    rl.close();
+    if (answer.trim().toLowerCase() !== 'y') { console.error('未确认账户；没有修改 Secret。'); process.exit(2); }
+  }
+}
 if (!process.stdin.isTTY || !process.stdout.isTTY) { console.error('为了隐藏密码输入，请在交互式终端运行此命令。'); process.exit(2); }
 function promptHidden(label) {
   return new Promise((resolve, reject) => {
@@ -29,7 +54,12 @@ if (first !== second) { console.error('两次输入不一致；没有保存任�
 const rounds = 310000; const salt = randomBytes(18); const derived = pbkdf2Sync(first, salt, rounds, 32, 'sha256');
 const encoded = `pbkdf2$sha256$${rounds}$${salt.toString('base64url')}$${derived.toString('base64url')}`;
 first = ''; second = '';
-if (mode === 'local') {
+if (outputFile) {
+  try {
+    await writeFile(outputFile, `${JSON.stringify({ ADMIN_PASSWORD_HASH: encoded })}\n`, { mode: 0o600, flag: 'wx' });
+    console.log('已生成仅含密码哈希的临时 Secret 文件；部署完成后会自动删除。');
+  } catch { console.error('无法安全创建临时 Secret 文件；没有部署。'); process.exit(1); }
+} else if (mode === 'local') {
   const file = '.dev.vars'; let text = '';
   try { text = await readFile(file, 'utf8'); } catch {}
   const lines = text.split(/\r?\n/).filter((line) => line && !line.startsWith('ADMIN_PASSWORD_HASH='));
@@ -37,8 +67,6 @@ if (mode === 'local') {
   await writeFile(file, `${lines.join('\n')}\n`, { mode: 0o600 });
   console.log('已保存本地开发用密码哈希到 .dev.vars（已被 Git 忽略）；密码本身未保存。');
 } else {
-  const configIndex = process.argv.indexOf('--config'); const config = configIndex >= 0 ? process.argv[configIndex + 1] : 'wrangler.jsonc';
-  const wrangler = path.resolve('node_modules/wrangler/bin/wrangler.js');
   const child = spawn(process.execPath, [wrangler, 'secret', 'put', 'ADMIN_PASSWORD_HASH', '--config', config], { stdio: ['pipe', 'inherit', 'inherit'], env: { ...process.env, CI: '1' } });
   child.stdin.end(`${encoded}\n`);
   const code = await new Promise((resolve, reject) => { child.once('error', reject); child.once('close', resolve); });

@@ -14,11 +14,14 @@
   "d1_databases": [
     {
       "binding": "DB",
-      "database_name": "customer",
+      "database_name": "customer-card-manager-v2-data",
       "database_id": "00000000-0000-0000-0000-000000000000",
       "migrations_dir": "migrations"
     }
   ],
+  "secrets": {
+    "required": ["ADMIN_PASSWORD_HASH"]
+  },
   "observability": {
     "enabled": false
   }

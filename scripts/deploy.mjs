@@ -1,7 +1,8 @@
 import { spawnSync } from 'node:child_process';
-import { readFile, writeFile } from 'node:fs/promises';
+import { chmod, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { createInterface } from 'node:readline/promises';
 import path from 'node:path';
+import os from 'node:os';
 const wrangler = path.resolve('node_modules/wrangler/bin/wrangler.js');
 function run(args, { capture = false } = {}) {
   const result = spawnSync(process.execPath, [wrangler, ...args], { encoding: 'utf8', stdio: capture ? 'pipe' : 'inherit', env: { ...process.env, CI: '1' } });
@@ -10,6 +11,17 @@ function run(args, { capture = false } = {}) {
   return capture ? (result.stdout || '') : '';
 }
 function parseJson(text) { const i = text.indexOf('['); if (i < 0) return null; try { return JSON.parse(text.slice(i)); } catch { return null; } }
+function runCaptured(args) {
+  const result = spawnSync(process.execPath, [wrangler, ...args], { encoding: 'utf8', stdio: 'pipe', env: { ...process.env, CI: '1' } });
+  if (result.error) throw result.error;
+  return { status: result.status ?? 1, output: `${result.stdout || ''}\n${result.stderr || ''}` };
+}
+async function confirmCurrentAccount() {
+  if (!process.stdin.isTTY || !process.stdout.isTTY) throw new Error('请在交互式终端运行，以确认 Wrangler 当前账户；尚未访问或修改远程资源。');
+  const rl = createInterface({ input: process.stdin, output: process.stdout });
+  try { return (await rl.question('以上 Wrangler 账户是你要部署到的账户吗？确认后输入 y：')).trim().toLowerCase() === 'y'; }
+  finally { rl.close(); }
+}
 async function confirmExistingDatabase(name, id) {
   if (!process.stdin.isTTY || !process.stdout.isTTY) throw new Error(`账号里已有名为 ${name} 的 D1，但本机没有保存此前确认的数据库 ID。请在交互式终端重跑，并确认它确实是本项目专用库；未应用迁移。`);
   const rl = createInterface({ input: process.stdin, output: process.stdout });
@@ -30,10 +42,16 @@ const createOnly = process.argv.includes('--create-only'); const migrateOnly = p
 try {
   runLocalCheck();
   run(['whoami']);
+  if (!(await confirmCurrentAccount())) throw new Error('未确认 Cloudflare 账户；没有创建资源、应用迁移或部署。');
   const base = JSON.parse(await readFile('wrangler.jsonc', 'utf8'));
   const db = base.d1_databases?.find(x => x.binding === 'DB'); if (!db) throw new Error('wrangler.jsonc 缺少 DB 绑定模板。');
   let rememberedId = null;
-  try { const prior = JSON.parse(await readFile('wrangler.deploy.jsonc', 'utf8')); rememberedId = prior.d1_databases?.find(x => x.binding === 'DB')?.database_id || null; } catch {}
+  try {
+    const prior = JSON.parse(await readFile('wrangler.deploy.jsonc', 'utf8'));
+    const priorDb = prior.d1_databases?.find(x => x.binding === 'DB');
+    rememberedId = priorDb?.database_id || null;
+    if (priorDb?.database_name) db.database_name = priorDb.database_name;
+  } catch {}
   const configuredId = db.database_id && db.database_id !== '00000000-0000-0000-0000-000000000000' ? db.database_id : null;
   const listText = run(['d1', 'list', '--json'], { capture: true }); let list = parseJson(listText);
   if (!Array.isArray(list)) { const start = listText.indexOf('{'); if (start >= 0) { try { const o = JSON.parse(listText.slice(start)); list = o.result || o.databases || null; } catch { list = null; } } }
@@ -54,15 +72,31 @@ try {
   if (createOnly) { console.log(`部署配置已生成：${config}（本地忽略，不提交 Git）。`); process.exit(0); }
   run(['d1', 'migrations', 'apply', db.database_name, '--remote', '--config', config]);
   if (migrateOnly) { console.log('数据库迁移命令已完成；没有执行部署。'); process.exit(0); }
-  const secretList = run(['secret', 'list', '--config', config, '--format', 'json'], { capture: true });
-  const secrets = (() => { try { const i = secretList.indexOf('['); if (i < 0) return null; return JSON.parse(secretList.slice(i)); } catch { return null; } })();
-  if (!Array.isArray(secrets)) throw new Error('无法确认远程管理员 Secret 状态；为避免意外覆盖，已停止部署。');
-  if (!secrets.some(s => s.name === 'ADMIN_PASSWORD_HASH')) {
-    console.log('尚未配置管理员密码，接下来会通过隐藏输入设置一次密码。');
-    const script = path.resolve('scripts/set-admin-secret.mjs');
-    const child = spawnSync(process.execPath, [script, '--remote', '--config', config], { stdio: 'inherit' });
-    if (child.status !== 0) throw new Error('管理员密码 Secret 未设置，停止部署。');
+  const secretProbe = runCaptured(['secret', 'list', '--config', config, '--format', 'json']);
+  let secrets = null;
+  if (secretProbe.status === 0) secrets = parseJson(secretProbe.output);
+  else if (/\[code:\s*10007\]/i.test(secretProbe.output)) secrets = []; // 第一次创建 Worker：尚无脚本可列出 Secret。
+  else throw new Error('无法确认远程管理员 Secret 状态；为避免覆盖现有密码或误部署，已停止。请检查 Wrangler 输出后重试。');
+  if (!Array.isArray(secrets)) throw new Error('Cloudflare 未返回可解析的 Secret 列表；为避免覆盖现有密码，已停止部署。');
+
+  let tempDir = '';
+  let secretFile = '';
+  try {
+    const deployArgs = ['deploy', '--config', config];
+    if (!secrets.some(s => s.name === 'ADMIN_PASSWORD_HASH')) {
+      console.log('首次设置管理员密码；密码会隐藏输入，只有哈希写入临时文件，并随本次 Worker 发布为 Secret。');
+      tempDir = await mkdtemp(path.join(os.tmpdir(), 'customer-card-manager-v2-'));
+      try { await chmod(tempDir, 0o700); } catch {}
+      secretFile = path.join(tempDir, 'secrets.json');
+      const script = path.resolve('scripts/set-admin-secret.mjs');
+      const child = spawnSync(process.execPath, [script, '--remote', '--config', config, '--account-confirmed', '--output-file', secretFile], { stdio: 'inherit' });
+      if (child.error) throw child.error;
+      if (child.status !== 0) throw new Error('管理员密码哈希未准备好，停止部署。');
+      deployArgs.push('--secrets-file', secretFile);
+    }
+    run(deployArgs);
+  } finally {
+    if (tempDir) await rm(tempDir, { recursive: true, force: true });
   }
-  run(['deploy', '--config', config]);
   console.log('部署完成。请使用 Wrangler 输出的网址打开后台，并先用测试记录验收。');
 } catch (e) { console.error(`\n部署流程停止：${e instanceof Error ? e.message : String(e)}`); console.error('请先核对 Wrangler 登录状态及 Cloudflare 命令结果；脚本不会删除数据库或覆盖客户记录。'); process.exitCode = 1; }
