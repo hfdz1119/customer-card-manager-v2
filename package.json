@@ -8,17 +8,18 @@
     "dev": "node scripts/config.mjs --local && wrangler d1 migrations apply customer-card-manager-v2-data --local --config wrangler.local.jsonc && npm run build && concurrently -k -n vite,worker -c cyan,magenta \"vite --host 0.0.0.0\" \"wrangler dev --config wrangler.local.jsonc --port 8787\"",
     "build": "tsc -b && vite build",
     "preview": "wrangler dev --config wrangler.local.jsonc --port 8787",
-    "test": "vitest run",
+    "test": "vitest run && node --test scripts/workers-build.unit.mjs",
     "typecheck": "tsc --noEmit && tsc -p tsconfig.worker.json --noEmit",
     "check": "npm run typecheck && npm test && npm run build",
     "db:create": "node scripts/deploy.mjs --create-only",
     "db:migrate": "node scripts/deploy.mjs --migrate-only",
     "db:backup": "node scripts/db-backup.mjs",
     "admin:password": "node scripts/set-admin-secret.mjs --local",
+    "admin:hash": "node scripts/set-admin-secret.mjs --generate",
     "admin:password:remote": "node scripts/set-admin-secret.mjs --remote --config wrangler.deploy.jsonc",
     "deploy": "node scripts/deploy.mjs",
     "db:migrate:local": "node scripts/config.mjs --local && wrangler d1 migrations apply customer-card-manager-v2-data --local --config wrangler.local.jsonc",
-    "deploy:worker-build": "node scripts/workers-build-guard.mjs"
+    "deploy:worker-build": "node scripts/workers-build.mjs"
   },
   "dependencies": {
     "@vitejs/plugin-react": "^4.3.4",

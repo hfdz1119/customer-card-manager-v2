@@ -19,9 +19,6 @@
       "migrations_dir": "migrations"
     }
   ],
-  "secrets": {
-    "required": ["ADMIN_PASSWORD_HASH"]
-  },
   "observability": {
     "enabled": false
   }

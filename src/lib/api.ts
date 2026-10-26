@@ -1,8 +1,9 @@
 let csrf: string | null = null;
-export async function refreshSession(): Promise<boolean> {
+export async function refreshSession(): Promise<{ authenticated: boolean; configured: boolean | null }> {
   const r = await fetch('/api/auth/status', { credentials: 'same-origin' }).catch(() => null);
-  if (!r?.ok) return false;
-  const data = await r.json() as { authenticated: boolean; csrf: string | null }; csrf = data.csrf; return data.authenticated;
+  if (!r?.ok) { csrf = null; return { authenticated: false, configured: null }; }
+  const data = await r.json() as { authenticated: boolean; configured: boolean; csrf: string | null };
+  csrf = data.csrf; return { authenticated: data.authenticated, configured: data.configured };
 }
 export function setCsrf(value: string | null) { csrf = value; }
 export async function api<T>(path: string, options: RequestInit = {}): Promise<T> {

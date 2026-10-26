@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import { PLAN_COST_CENTS, PLAN_LABELS, businessDate, csvDocument, daysBetween, expiryStatus, isISODate } from '../lib/shared';
-import { clearSessionCookie, clientIpHash, getSession, login } from './auth';
+import { clearSessionCookie, clientIpHash, getSession, login, passwordSecretConfigured } from './auth';
 import type { CustomerRow, Env, PurchaseRow } from './types';
 
 const planSchema = z.enum(['monthly', 'quarterly', 'annual', 'whitelist']);
@@ -38,18 +38,21 @@ async function listCustomers(env: Env): Promise<CustomerRow[]> {
 }
 async function handleApi(request: Request, env: Env): Promise<Response> {
   if (!env.DB) return error('数据库 DB 尚未绑定，请先绑定 D1 后重新部署。', 503);
-  if (!env.ADMIN_PASSWORD_HASH || !env.ADMIN_PASSWORD_HASH.startsWith('pbkdf2$sha256$')) return error('管理员密码尚未初始化。请在部署环境设置 ADMIN_PASSWORD_HASH。', 503);
   const url = new URL(request.url); const path = url.pathname.replace(/\/$/, '') || '/';
+  const passwordConfigured = passwordSecretConfigured(env);
   if (path === '/api/auth/status' && request.method === 'GET') {
-    const session = await getSession(request, env); return json({ authenticated: !!session, csrf: session?.csrf ?? null });
+    if (!passwordConfigured) return json({ authenticated: false, configured: false, csrf: null });
+    const session = await getSession(request, env); return json({ authenticated: !!session, configured: true, csrf: session?.csrf ?? null });
   }
+  if (!passwordConfigured) return error('管理员密码尚未初始化。请按 README 的命令生成哈希，并将其保存为 Worker Secret：ADMIN_PASSWORD_HASH。', 503);
+  const secureEnv = env;
   if (path === '/api/auth/login' && request.method === 'POST') {
     if (!sameOrigin(request)) return error('请求来源无效。', 403);
-    const ipHash = await clientIpHash(request, env); const now = Math.floor(Date.now() / 1000);
+    const ipHash = await clientIpHash(request, secureEnv); const now = Math.floor(Date.now() / 1000);
     await env.DB.prepare('DELETE FROM login_attempts WHERE window_started_at < ?').bind(now - 86_400).run();
     const attempt = await env.DB.prepare('SELECT attempts,locked_until FROM login_attempts WHERE ip_hash=?').bind(ipHash).first<{ attempts: number; locked_until: number }>();
     if (attempt && attempt.locked_until > now) return error('登录尝试过多，请稍后再试。', 429);
-    const session = await login(request, env);
+    const session = await login(request, secureEnv);
     if (!session) {
       await env.DB.prepare(`INSERT INTO login_attempts (ip_hash,attempts,window_started_at,locked_until) VALUES (?,1,?,0)
         ON CONFLICT(ip_hash) DO UPDATE SET attempts=CASE WHEN window_started_at < ? THEN 1 ELSE attempts+1 END,
@@ -61,7 +64,7 @@ async function handleApi(request: Request, env: Env): Promise<Response> {
     await env.DB.prepare('DELETE FROM login_attempts WHERE ip_hash=?').bind(ipHash).run();
     const response = json({ authenticated: true, csrf: session.csrf }); sessionCookie(response.headers, session.cookie); return response;
   }
-  const current = await getSession(request, env);
+  const current = await getSession(request, secureEnv);
   if (path === '/api/auth/logout' && request.method === 'POST') {
     if (!current) return json({ ok: true });
     if (!validateCsrf(request, current.csrf)) return error('请求校验失败，请刷新后重试。', 403);
