@@ -17,6 +17,15 @@ function run(args) {
 }
 
 try {
+  // Cloudflare Workers Builds may leave its Build command empty. Keep all local gates here.
+  const checks = spawnSync(process.platform === 'win32' ? 'npm.cmd' : 'npm', ['run', 'check'], {
+    stdio: 'inherit',
+    shell: process.platform === 'win32',
+    env: { ...process.env, CI: '1' },
+  });
+  if (checks.error) throw checks.error;
+  if (checks.status !== 0) throw new Error('类型检查、测试或生产构建未通过，已停止部署。');
+
   const configResult = spawnSync(process.execPath, [path.resolve('scripts/config-workers-build.mjs')], {
     stdio: 'inherit',
     env: process.env,

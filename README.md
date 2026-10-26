@@ -21,16 +21,13 @@
 
 ## Cloudflare Workers 直接连接 GitHub（推荐）
 
-这个仓库的 V2 Worker 在 `worker-v2` 分支；原来的 Pages 代码保留在 `main` 作为备份，避免推送时触发旧 Pages 项目的构建。请把 Cloudflare 连接到 `worker-v2`，不要连 `main`，也不要把它作为 Pages 项目导入。
+此仓库只包含 V2 代码。请在 Cloudflare Workers Builds 连接 GitHub 仓库 `hfdz1119/customer-card-manager-v2` 的 `main` 分支；不要把它创建成 Pages 项目。
 
-1. 打开 Cloudflare Dashboard → **Workers & Pages** → **Create application** → **GitHub**，授权后选 `hfdz1119/customer-card-manager`，分支选 `worker-v2`。Worker 名称必须是 `customer-card-manager-v2`。
-2. 构建设置填写：
-   - Build command：`npm run check`
-   - Deploy command：`npm run deploy:worker-build`
-   - Root directory：仓库根目录 `/`
-3. 在 Worker 的 **Settings → Builds → Build variables and secrets** 里添加构建变量 `D1_DATABASE_ID`，值填你专用 `customer` D1 的 Database ID。它只供构建时生成本地忽略的 Wrangler 配置，不会写入 Git；不要填其他项目的数据库 ID。
-4. Workers Builds 默认生成的部署令牌没有 D1 Edit 权限，因此迁移会被 Cloudflare 拒绝。为这个 Worker 选用的 Build API token 增加账户级 **D1 Edit** 权限；保留部署所需的 Workers Scripts Edit。权限不够时构建会在迁移步骤停止，不会继续部署。
-5. 点 **Save and Deploy**。每次构建会先运行类型检查、测试和生产构建，再应用未执行的 D1 migrations，成功后才部署 Worker。迁移只创建本项目表和索引，不删除客户数据。
+1. 打开 Cloudflare Dashboard → **Workers & Pages** → **Create application** → **GitHub**，授权后选 `hfdz1119/customer-card-manager-v2`，分支选 `main`。Worker 名称必须是 `customer-card-manager-v2`。
+2. 构建设置只需改一项：**Build command 留空**，**Deploy command** 填 `npm run deploy:worker-build`，根目录 `/` 保持不变。这个命令会自动执行类型检查、测试、生产构建、D1 迁移和 Worker 部署。
+3. 在 Worker 的 **Settings → Builds → Build variables and secrets** 添加 `D1_DATABASE_ID`，值填专用 `customer` D1 的 Database ID。它只用于生成构建时的本地配置，不会写进 Git。
+4. 检查这个 Worker 的 **Build token** 有账户级 **D1 Edit** 和 **Workers Scripts Edit** 权限；默认令牌缺少 D1 Edit 时，迁移会被拒绝并停止部署。
+5. 点 **Save and Deploy**。后续推送 `main` 就会用同一命令自动检查、构建、迁移并部署；迁移只新增本项目表和索引，不删除客户数据。
 6. 首次部署完成后，在自己的电脑终端 clone 这个仓库、安装依赖并登录 Wrangler，再运行下面的安全密码命令。密码会隐藏输入并直接保存为 Worker Secret，不进 Git 或聊天：
 
    ```sh
@@ -40,9 +37,9 @@
    ```
 
    设置 Secret 前，后台 API 会提示管理员密码尚未初始化；设置后即可登录，不需要再部署一次。
-7. 后续只要把更新推到 `worker-v2`，Cloudflare 就会自动检查、迁移并部署。不要推到 `main`；它是保留的旧 Pages 备份。
+7. 后续把更新推到这个仓库的 `main`，Cloudflare 就会自动检查、迁移并部署。旧 Pages 版在另一个仓库，保持不动。
 
-如果你在 Cloudflare 界面里先选了新 Worker，确认 Worker 名称为 `customer-card-manager-v2`，连接时选择 GitHub 仓库分支 `worker-v2`。Worker Builds 的预览分支不会自动成为正式生产部署。
+如果你已创建这个 Worker，只需到 **Settings → Builds** 把 Deploy command 改好，再添加 `D1_DATABASE_ID` 并确认 Build token 权限后重试。Workers Builds 的预览分支不会自动成为正式生产部署。
 
 ## 首次部署（自己的电脑/终端）
 
@@ -51,8 +48,8 @@
 1. 在 GitHub Fork 本仓库，然后在终端 clone 你自己的仓库并进入项目目录：
 
    ```sh
-   git clone https://github.com/<你的用户名>/customer-card-manager.git
-   cd customer-card-manager
+   git clone https://github.com/<你的用户名>/customer-card-manager-v2.git
+   cd customer-card-manager-v2
    corepack pnpm install
    ```
 
@@ -115,7 +112,7 @@ npm run dev
 npm run dev                 # 本地 UI + Worker API + 本地 D1
 npm run build               # TypeScript 与 Vite 生产构建
 npm run deploy              # 本地 Wrangler 登录后完整检查、必要迁移、部署
-npm run deploy:worker-build # 仅 Cloudflare Workers Builds：先迁移再部署
+npm run deploy:worker-build # Cloudflare Workers Builds：检查、构建、迁移并部署
 npm run db:migrate          # 对 Cloudflare 已登录账号应用未执行迁移
 npm run db:backup           # 导出 Cloudflare D1 SQL 备份到 backups/
 npm run check               # 类型检查、自动化测试、生产构建
