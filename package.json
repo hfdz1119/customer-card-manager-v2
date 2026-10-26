@@ -1,0 +1,44 @@
+{
+  "name": "customer-card-manager-v2",
+  "private": false,
+  "version": "2.0.0",
+  "type": "module",
+  "description": "轻量白名单卡片销售客户管理工具，运行于 Cloudflare Workers + D1",
+  "scripts": {
+    "dev": "node scripts/config.mjs --local && wrangler d1 migrations apply customer --local --config wrangler.local.jsonc && npm run build && concurrently -k -n vite,worker -c cyan,magenta \"vite --host 0.0.0.0\" \"wrangler dev --config wrangler.local.jsonc --port 8787\"",
+    "build": "tsc -b && vite build",
+    "preview": "wrangler dev --config wrangler.local.jsonc --port 8787",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit && tsc -p tsconfig.worker.json --noEmit",
+    "check": "npm run typecheck && npm test && npm run build",
+    "db:create": "node scripts/deploy.mjs --create-only",
+    "db:migrate": "node scripts/deploy.mjs --migrate-only",
+    "db:backup": "node scripts/db-backup.mjs",
+    "admin:password": "node scripts/set-admin-secret.mjs --local",
+    "admin:password:remote": "node scripts/set-admin-secret.mjs --remote",
+    "deploy": "node scripts/deploy.mjs",
+    "db:migrate:local": "node scripts/config.mjs --local && wrangler d1 migrations apply customer --local --config wrangler.local.jsonc",
+    "deploy:worker-build": "node scripts/workers-build-deploy.mjs"
+  },
+  "dependencies": {
+    "@vitejs/plugin-react": "^4.3.4",
+    "lucide-react": "^0.468.0",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "zod": "^3.24.1"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^4.20250109.0",
+    "@tailwindcss/vite": "^4.0.0",
+    "@types/node": "^22.10.5",
+    "@types/react": "^18.3.18",
+    "@types/react-dom": "^18.3.5",
+    "concurrently": "^9.1.2",
+    "tailwindcss": "^4.0.0",
+    "typescript": "~5.7.2",
+    "vite": "^6.4.5",
+    "vitest": "^3.2.7",
+    "wrangler": "^4.52.0"
+  },
+  "packageManager": "pnpm@10.8.1"
+}
